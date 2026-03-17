@@ -1,0 +1,26 @@
+{
+  "name": "oc-twilio-voice",
+  "version": "1.0.0",
+  "description": "Custom Twilio voice server for OpenClaw",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "ws": "^8.18.0",
+    "twilio": "^5.4.2",
+    "axios": "^1.7.9",
+    "form-data": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/ws": "^8.5.14",
+    "@types/node": "^22.13.1",
+    "typescript": "^5.7.3",
+    "ts-node": "^10.9.2"
+  }
+}

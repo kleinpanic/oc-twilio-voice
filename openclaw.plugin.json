@@ -1,0 +1,21 @@
+{
+  "id": "oc-twilio-voice",
+  "version": "1.0.0",
+  "description": "Custom Twilio voice server for OpenClaw with Spark STT/TTS failover (replaces built-in voice-call plugin)",
+  "uiHints": {
+    "port": {
+      "label": "Listen Port",
+      "help": "Must match Twilio webhook config. Default: 3334."
+    },
+    "publicUrlHost": {
+      "label": "Public URL Host (ngrok or domain)"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" }
+    }
+  }
+}
