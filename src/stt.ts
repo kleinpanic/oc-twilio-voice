@@ -1,7 +1,8 @@
 /**
- * Speech-to-text with failover.
- * Primary: Spark Whisper (local/on-prem)
- * Fallback: OpenAI Audio Transcriptions API
+ * Speech-to-text with failover chain:
+ *   1. Spark Parakeet (local/on-prem, fastest)
+ *   2. OpenAI Whisper API
+ *   3. ElevenLabs Scribe (scribe_v1) — quota-safe fallback
  */
 
 const STT_URL = process.env.SPARK_STT_URL ?? 'http://dgx-spark.local:18092/v1/audio/transcriptions';
@@ -11,6 +12,10 @@ const SPARK_API_KEY = process.env.SPARK_API_KEY ?? '';
 const STT_FALLBACK_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const STT_FALLBACK_MODEL = 'whisper-1';
 const STT_FALLBACK_API_KEY = process.env.OPENAI_API_KEY ?? '';
+
+const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text';
+const ELEVENLABS_STT_MODEL = 'scribe_v1';
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY ?? '';
 
 type SttAttemptResult = {
   ok: boolean;
@@ -30,23 +35,29 @@ async function requestTranscription(params: {
   url: string;
   model: string;
   apiKey?: string;
+  apiKeyHeader?: 'Authorization' | 'xi-api-key';
   wavBuffer: Buffer;
   timeoutMs: number;
 }): Promise<SttAttemptResult> {
-  const { url, model, apiKey, wavBuffer, timeoutMs } = params;
+  const { url, model, apiKey, apiKeyHeader = 'Authorization', wavBuffer, timeoutMs } = params;
 
   const formData = new FormData();
   formData.append('file', new Blob([new Uint8Array(wavBuffer)], { type: 'audio/wav' }), 'audio.wav');
-  formData.append('model', model);
-  formData.append('language', 'en');
+  formData.append('model_id', model);  // ElevenLabs uses model_id
+  formData.append('model', model);     // OpenAI/Spark use model
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers[apiKeyHeader] = apiKeyHeader === 'Authorization' ? `Bearer ${apiKey}` : apiKey;
+  }
+
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+      headers,
       body: formData,
       signal: controller.signal,
     });
@@ -80,6 +91,18 @@ async function requestTranscription(params: {
   }
 }
 
+function shouldFallback(result: SttAttemptResult): boolean {
+  return !!(
+    result.networkError ||
+    result.timeoutError ||
+    (typeof result.status === 'number' && result.status >= 500) ||
+    // 429 (rate limit / quota) and 401/403 (missing/stale Spark token)
+    result.status === 429 ||
+    result.status === 401 ||
+    result.status === 403
+  );
+}
+
 /**
  * Transcribe a WAV audio buffer.
  * Returns empty string on total failure.
@@ -87,6 +110,7 @@ async function requestTranscription(params: {
 export async function transcribe(wavBuffer: Buffer): Promise<string> {
   console.log(`[stt] Starting transcription (${wavBuffer.length} bytes WAV)`);
 
+  // ── 1. Spark Parakeet ────────────────────────────────────────────────────
   const tStart = Date.now();
   const primary = await requestTranscription({
     url: STT_URL,
@@ -95,49 +119,59 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
     wavBuffer,
     timeoutMs: Number(process.env.STT_PRIMARY_TIMEOUT_MS ?? 8_000),
   });
-  console.log(`[stt] Primary took ${Date.now() - tStart}ms (ok=${primary.ok}${primary.error ? ' err=' + primary.error.slice(0, 60) : ''})`);
+  console.log(`[stt] Spark took ${Date.now() - tStart}ms (ok=${primary.ok}${primary.error ? ' err=' + primary.error.slice(0, 60) : ''})`);
 
   if (primary.ok) {
-    if (primary.text) {
-      console.log(`[stt] Spark transcribed: "${primary.text.slice(0, 100)}${primary.text.length > 100 ? '…' : ''}"`);
-    }
+    if (primary.text) console.log(`[stt] Spark: "${primary.text.slice(0, 100)}"`);
     return primary.text;
   }
 
-  const shouldFallback =
-    primary.networkError ||
-    primary.timeoutError ||
-    (typeof primary.status === 'number' && primary.status >= 500);
-
-  if (!shouldFallback) {
-    console.error(`[stt] Spark request failed (no fallback): ${primary.error ?? 'unknown error'}`);
+  if (!shouldFallback(primary)) {
+    console.error(`[stt] Spark failed (no fallback): ${primary.error ?? 'unknown'}`);
     return '';
   }
 
-  if (!STT_FALLBACK_API_KEY) {
-    console.error('[stt] Spark failed and no OpenAI API key found for fallback');
+  // ── 2. OpenAI Whisper ────────────────────────────────────────────────────
+  if (STT_FALLBACK_API_KEY) {
+    console.warn('[stt] Spark unavailable → trying OpenAI Whisper');
+    const whisper = await requestTranscription({
+      url: STT_FALLBACK_URL,
+      model: STT_FALLBACK_MODEL,
+      apiKey: STT_FALLBACK_API_KEY,
+      wavBuffer,
+      timeoutMs: 30_000,
+    });
+
+    if (whisper.ok) {
+      if (whisper.text) console.log(`[stt] Whisper: "${whisper.text.slice(0, 100)}"`);
+      return whisper.text;
+    }
+
+    console.warn(`[stt] Whisper failed (${whisper.error?.slice(0, 80)}) → trying ElevenLabs Scribe`);
+  } else {
+    console.warn('[stt] No OpenAI key → skipping Whisper, trying ElevenLabs Scribe');
+  }
+
+  // ── 3. ElevenLabs Scribe ─────────────────────────────────────────────────
+  if (!ELEVENLABS_API_KEY) {
+    console.error('[stt] All STT providers exhausted (no ElevenLabs key)');
     return '';
   }
 
-  console.warn(`[stt] Spark unavailable; falling back to Whisper API (${STT_FALLBACK_URL})`);
-  const fallback = await requestTranscription({
-    url: STT_FALLBACK_URL,
-    model: STT_FALLBACK_MODEL,
-    apiKey: STT_FALLBACK_API_KEY,
+  const scribe = await requestTranscription({
+    url: ELEVENLABS_STT_URL,
+    model: ELEVENLABS_STT_MODEL,
+    apiKey: ELEVENLABS_API_KEY,
+    apiKeyHeader: 'xi-api-key',
     wavBuffer,
     timeoutMs: 30_000,
   });
 
-  if (!fallback.ok) {
-    console.error(`[stt] Whisper fallback failed: ${fallback.error ?? 'unknown error'}`);
-    return '';
+  if (scribe.ok) {
+    if (scribe.text) console.log(`[stt] ElevenLabs Scribe: "${scribe.text.slice(0, 100)}"`);
+    return scribe.text;
   }
 
-  if (fallback.text) {
-    console.log(
-      `[stt] Whisper fallback transcribed: "${fallback.text.slice(0, 100)}${fallback.text.length > 100 ? '…' : ''}"`,
-    );
-  }
-
-  return fallback.text;
+  console.error(`[stt] All STT providers failed. Last error: ${scribe.error ?? 'unknown'}`);
+  return '';
 }

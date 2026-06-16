@@ -28,7 +28,8 @@ function isTimeoutError(err: unknown): boolean {
 
 async function requestSparkTts(text: string): Promise<TtsAttempt> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
+  const timeoutMs = Number(process.env.TTS_PRIMARY_TIMEOUT_MS ?? 8_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(TTS_URL, {
@@ -124,7 +125,9 @@ export async function synthesize(text: string): Promise<Buffer> {
   const shouldFallback =
     primary.networkError ||
     primary.timeoutError ||
-    (typeof primary.status === 'number' && primary.status >= 500);
+    (typeof primary.status === 'number' &&
+      // 5xx, or auth failures from a missing/stale Spark token (401/403)
+      (primary.status >= 500 || primary.status === 401 || primary.status === 403));
 
   if (!shouldFallback) {
     throw new Error(`Spark TTS failed (no fallback): ${primary.error ?? 'unknown error'}`);
