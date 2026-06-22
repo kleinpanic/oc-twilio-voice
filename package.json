@@ -1,14 +1,21 @@
 {
   "name": "oc-twilio-voice",
   "version": "1.0.0",
-  "description": "Custom Twilio voice server for OpenClaw",
+  "description": "Custom Twilio voice server and OpenClaw companion tools",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "test:webhook": "npx tsx tests/test-webhook.ts",
+    "test:pipeline": "npx tsx tests/test-pipeline.ts",
+    "test:gateway": "npx tsx tests/test-gateway.ts",
+    "test": "npx tsx tests/test-webhook.ts && npx tsx tests/test-pipeline.ts && npx tsx tests/test-gateway.ts",
+    "plugin:build": "npm run build && openclaw plugins build --entry ./dist/plugin.js",
+    "plugin:validate": "npm run build && openclaw plugins validate --entry ./dist/plugin.js"
   },
   "dependencies": {
+    "typebox": "^1.1.38",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "ws": "^8.18.0",
@@ -16,11 +23,21 @@
     "axios": "^1.7.9",
     "form-data": "^4.0.1"
   },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/ws": "^8.5.14",
     "@types/node": "^22.13.1",
+    "openclaw": "2026.6.6",
+    "tsx": "^4.20.5",
     "typescript": "^5.7.3",
     "ts-node": "^10.9.2"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/plugin.js"
+    ]
   }
 }
