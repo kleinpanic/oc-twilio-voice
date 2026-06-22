@@ -8,6 +8,7 @@ Failover chain for incoming and outgoing calls:
 1. **OpenAI Realtime API (GPT-4o)**: Primary path for low-latency, conversational voice bridge.
 2. **STT → OpenClaw → TTS**: Fallback path if OpenAI Realtime is unavailable or fails.
    - **STT**: Local Spark (Whisper) with OpenAI Whisper API failover.
+   - **LLM**: Local Spark OpenAI-compatible chat-completions (`SPARK_LLM_URL`, default `http://dgx-spark.local:18091/v1/chat/completions`; model via `VOICE_FALLBACK_MODEL`). Authed with `SPARK_API_KEY`. OpenRouter is intentionally not used.
    - **TTS**: Local Spark (Kokoro) with ElevenLabs TTS failover.
 
 ## Installation
@@ -15,6 +16,8 @@ Failover chain for incoming and outgoing calls:
 ```bash
 npm install
 npm run build
+npm run plugin:build
+npm run plugin:validate
 ```
 
 ## How to cut over from the old plugin
@@ -66,7 +69,23 @@ systemctl --user enable oc-twilio-voice.service
 To initiate an outbound call:
 
 ```bash
-curl -X POST http://localhost:3334/call/outbound \
+curl -X POST http://localhost:3334/call \
   -H "Content-Type: application/json" \
   -d '{"to": "+1234567890"}'
 ```
+
+## OpenClaw Companion Plugin
+
+This package also exposes a native OpenClaw tool entrypoint at `./dist/plugin.js`.
+The service still runs through systemd; the plugin only gives agents controlled
+tools for service status and allowlisted outbound calls.
+
+```bash
+openclaw plugins install --link /home/broklein/codeWS/TypeScript/oc-twilio-voice
+openclaw plugins inspect oc-twilio-voice --json
+```
+
+Tools:
+
+- `oc_twilio_voice_status`: checks the local service `/status` endpoint.
+- `oc_twilio_voice_call`: optional side-effect tool for POST `/call`.
