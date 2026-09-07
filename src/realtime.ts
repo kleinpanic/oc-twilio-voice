@@ -9,7 +9,12 @@
  */
 
 import WebSocket from 'ws';
-import { mulawToPcm16, pcm16ToMulaw } from './mulaw';
+import twilio from 'twilio';
+
+const twilioClient = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN,
+);
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -18,7 +23,15 @@ const SYSTEM_PROMPT =
   'Be helpful, concise, and direct. Keep voice responses to one or two sentences ' +
   'unless the caller asks for more detail. Start by greeting Klein when the call connects.';
 
-export function createRealtimeBridge(twilioWs: WebSocket, callSid: string): Promise<void> {
+/**
+ * Returns a Promise that resolves when the OpenAI WS is open and ready.
+ * The optional onClosed callback fires when OpenAI WS closes mid-call
+ * (e.g. quota error) so stream.ts can activate the fallback path.
+ */
+export function createRealtimeBridge(
+  twilioWs: WebSocket, callSid: string, initialStreamSid: string,
+  onClosed?: () => void,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!OPENAI_API_KEY) {
       reject(new Error('OPENAI_API_KEY not set'));
@@ -26,7 +39,7 @@ export function createRealtimeBridge(twilioWs: WebSocket, callSid: string): Prom
     }
 
     const openaiWs = new WebSocket(
-      'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
+      'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -35,7 +48,7 @@ export function createRealtimeBridge(twilioWs: WebSocket, callSid: string): Prom
       },
     );
 
-    let streamSid: string | null = null;
+    let streamSid: string | null = initialStreamSid || null;
     let resolved = false;
 
     // ── OpenAI WS open ───────────────────────────────────────────────────────
@@ -49,8 +62,8 @@ export function createRealtimeBridge(twilioWs: WebSocket, callSid: string): Prom
           modalities: ['audio', 'text'],
           instructions: SYSTEM_PROMPT,
           voice: 'alloy',
-          input_audio_format: 'pcm16',
-          output_audio_format: 'pcm16',
+          input_audio_format: 'g711_ulaw',   // Twilio native — zero conversion needed
+          output_audio_format: 'g711_ulaw',  // Twilio native — zero conversion needed
           input_audio_transcription: { model: 'whisper-1' },
           turn_detection: {
             type: 'server_vad',
@@ -58,10 +71,19 @@ export function createRealtimeBridge(twilioWs: WebSocket, callSid: string): Prom
             prefix_padding_ms: 300,
             silence_duration_ms: 500,
           },
+          tools: [
+            {
+              type: 'function',
+              name: 'hang_up',
+              description: 'End the phone call. Use this when the conversation is naturally over — user says bye, take care, thanks, goodbye, etc.',
+              parameters: { type: 'object', properties: {} },
+            },
+          ],
+          tool_choice: 'auto',
         },
       }));
 
-      // Trigger opening greeting
+      // Trigger opening greeting — explicitly request audio output
       openaiWs.send(JSON.stringify({
         type: 'conversation.item.create',
         item: {
@@ -70,7 +92,10 @@ export function createRealtimeBridge(twilioWs: WebSocket, callSid: string): Prom
           content: [{ type: 'input_text', text: 'The call just connected. Greet me.' }],
         },
       }));
-      openaiWs.send(JSON.stringify({ type: 'response.create' }));
+      openaiWs.send(JSON.stringify({
+        type: 'response.create',
+        response: { modalities: ['text', 'audio'] },
+      }));
 
       if (!resolved) {
         resolved = true;
@@ -95,23 +120,56 @@ export function createRealtimeBridge(twilioWs: WebSocket, callSid: string): Prom
         return;
       }
 
-      if (msg.type === 'response.audio.delta' && typeof msg.delta === 'string') {
-        // OpenAI sends PCM16 at 24kHz — convert to 8kHz µ-law for Twilio
-        const pcmBuf = Buffer.from(msg.delta as string, 'base64');
-        const mulawBuf = pcm16ToMulaw(pcmBuf, 24000);
+      // Log all non-audio events for debugging
+      if (msg.type !== 'response.audio.delta') {
+        const extra = (msg.type === 'error' || msg.type === 'response.done')
+          ? JSON.stringify(msg).slice(0, 300) : '';
+        console.log(`[realtime] OpenAI event: ${msg.type as string}`, extra);
 
-        if (streamSid) {
+        // Fatal quota/auth errors — signal caller to fall back
+        if (msg.type === 'response.done') {
+          const resp = msg.response as Record<string, unknown> | undefined;
+          const errCode = (resp?.status_details as Record<string, unknown> | undefined)
+            ?.error as Record<string, string> | undefined;
+          if (resp?.status === 'failed' && errCode?.code === 'insufficient_quota') {
+            console.warn('[realtime] Insufficient quota — closing and falling back to STT/TTS path');
+            openaiWs.close();
+          }
+        }
+      }
+
+      if (msg.type === 'response.audio.delta' && typeof msg.delta === 'string') {
+        // OpenAI sends g711_ulaw — forward directly to Twilio, zero conversion
+        if (streamSid && twilioWs.readyState === WebSocket.OPEN) {
           twilioWs.send(JSON.stringify({
             event: 'media',
             streamSid,
-            media: { payload: mulawBuf.toString('base64') },
+            media: { payload: msg.delta },
           }));
+        }
+      }
+
+      // ── hang_up function call ────────────────────────────────────────────
+      if (msg.type === 'response.output_item.done') {
+        const item = msg.item as Record<string, unknown> | undefined;
+        if (item?.type === 'function_call' && item?.name === 'hang_up') {
+          console.log(`[realtime] AI requested hang_up for CallSid=${callSid}`);
+          // Submit function result so OpenAI knows it's done
+          openaiWs.send(JSON.stringify({
+            type: 'conversation.item.create',
+            item: { type: 'function_call_output', call_id: item.call_id, output: 'call_ended' },
+          }));
+          // End the call via Twilio REST API
+          twilioClient.calls(callSid).update({ status: 'completed' })
+            .then(() => console.log(`[realtime] Call ${callSid} ended via hang_up`))
+            .catch((e: Error) => console.error('[realtime] hang_up REST error:', e.message));
         }
       }
     });
 
     openaiWs.on('close', () => {
       console.log(`[realtime] OpenAI WS closed for CallSid=${callSid}`);
+      onClosed?.();
     });
 
     // ── Twilio → OpenAI (audio chunks) ───────────────────────────────────────
@@ -129,12 +187,10 @@ export function createRealtimeBridge(twilioWs: WebSocket, callSid: string): Prom
         console.log(`[realtime] Stream started: ${streamSid}`);
       } else if (msg.event === 'media' && openaiWs.readyState === WebSocket.OPEN) {
         const media = msg.media as Record<string, string>;
-        // Twilio sends 8kHz µ-law — decode + upsample to 24kHz PCM16
-        const mulawBuf = Buffer.from(media.payload, 'base64');
-        const pcmBuf = mulawToPcm16(mulawBuf, 24000);
+        // Twilio sends g711_ulaw — forward directly to OpenAI, zero conversion
         openaiWs.send(JSON.stringify({
           type: 'input_audio_buffer.append',
-          audio: pcmBuf.toString('base64'),
+          audio: media.payload,   // already base64 g711_ulaw
         }));
       } else if (msg.event === 'stop') {
         console.log(`[realtime] Twilio stream stopped for CallSid=${callSid}`);

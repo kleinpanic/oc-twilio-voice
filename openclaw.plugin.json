@@ -1,7 +1,7 @@
 {
   "id": "oc-twilio-voice",
   "version": "1.0.0",
-  "description": "Custom Twilio voice server for OpenClaw with Spark STT/TTS failover (replaces built-in voice-call plugin)",
+  "description": "Companion tools for the standalone oc-twilio-voice service.",
   "uiHints": {
     "port": {
       "label": "Listen Port",
@@ -13,9 +13,50 @@
   },
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
     "properties": {
-      "enabled": { "type": "boolean" }
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "port": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535,
+        "default": 3334
+      },
+      "baseUrl": {
+        "type": "string",
+        "description": "Local oc-twilio-voice service base URL. Defaults to http://127.0.0.1:<port>."
+      },
+      "publicUrlHost": {
+        "type": "string",
+        "description": "Public hostname used by Twilio webhooks, for status reporting."
+      },
+      "callApiToken": {
+        "type": "string",
+        "description": "Bearer token for POST /call. Falls back to CALL_API_TOKEN or OPENCLAW_HOOKS_TOKEN."
+      },
+      "defaultAgentId": {
+        "type": "string",
+        "default": "main",
+        "description": "Agent id used for outbound calls when no agentId is supplied."
+      }
+    },
+    "additionalProperties": false
+  },
+  "name": "OC Twilio Voice",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "oc_twilio_voice_status",
+      "oc_twilio_voice_call"
+    ]
+  },
+  "toolMetadata": {
+    "oc_twilio_voice_call": {
+      "optional": true
     }
   }
 }
