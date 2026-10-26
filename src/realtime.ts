@@ -182,11 +182,12 @@ export function createRealtimeBridge(
       }
 
       if (msg.event === 'start') {
-        const start = msg.start as Record<string, string>;
-        streamSid = start.streamSid;
+        const start = msg.start as Record<string, unknown> | undefined;
+        if (typeof start?.streamSid === 'string') streamSid = start.streamSid;
         console.log(`[realtime] Stream started: ${streamSid}`);
       } else if (msg.event === 'media' && openaiWs.readyState === WebSocket.OPEN) {
-        const media = msg.media as Record<string, string>;
+        const media = msg.media as Record<string, unknown> | undefined;
+        if (typeof media?.payload !== 'string') return;
         // Twilio sends g711_ulaw — forward directly to OpenAI, zero conversion
         openaiWs.send(JSON.stringify({
           type: 'input_audio_buffer.append',
