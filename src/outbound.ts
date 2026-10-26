@@ -4,12 +4,13 @@
  */
 
 import twilio from 'twilio';
+import { parseAllowlist } from './security.js';
 
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID ?? '';
 const TWILIO_AUTH_TOKEN  = process.env.TWILIO_AUTH_TOKEN  ?? '';
 const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER ?? '';
 const PUBLIC_URL_HOST    = process.env.PUBLIC_URL_HOST    ?? 'localhost';
-const ALLOWED_CALLERS    = (process.env.ALLOWED_CALLERS   ?? '').split(',').map(n => n.trim());
+const ALLOWED_CALLERS    = parseAllowlist(process.env.ALLOWED_CALLERS);
 
 const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
