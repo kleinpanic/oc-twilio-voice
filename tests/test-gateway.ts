@@ -71,10 +71,12 @@ async function run(): Promise<void> {
     let capturedUrl = '';
     let capturedBody: any = null;
     let capturedAuth = '';
+    let capturedTimeout: unknown;
     (axios as any).post = async (url: string, body: any, cfg: any) => {
       capturedUrl = url;
       capturedBody = body;
       capturedAuth = cfg?.headers?.Authorization ?? '';
+      capturedTimeout = cfg?.timeout;
       return { data: { choices: [{ message: { content: 'hello from spark' } }] } };
     };
 
@@ -94,6 +96,11 @@ async function run(): Promise<void> {
         'Authorization header is Bearer SPARK_API_KEY',
         capturedAuth.startsWith('Bearer ') && capturedAuth.includes('test-key-not-a-real-secret'),
         'auth header did not use SPARK_API_KEY',
+      );
+      check(
+        'request sets a finite, positive timeout',
+        typeof capturedTimeout === 'number' && capturedTimeout > 0 && Number.isFinite(capturedTimeout),
+        String(capturedTimeout),
       );
       check(
         'main persona resolves to VOICE_FALLBACK_MODEL default',

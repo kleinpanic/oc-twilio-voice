@@ -17,6 +17,9 @@ const SPARK_API_KEY = process.env.SPARK_API_KEY ?? '';
 const SPARK_LLM_URL =
   process.env.SPARK_LLM_URL ?? 'http://dgx-spark.local:18091/v1/chat/completions';
 
+// Bound each request so a hung endpoint cannot stall the call's turn loop.
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 15_000);
+
 // Default fallback model id — local Spark-served, overridable via env.
 const DEFAULT_FALLBACK_MODEL = process.env.VOICE_FALLBACK_MODEL ?? 'spark/llm';
 
@@ -93,6 +96,7 @@ export async function sendToOpenClaw(
       temperature: 0.7,
     },
     {
+      timeout: LLM_TIMEOUT_MS,
       headers: {
         Authorization:  `Bearer ${SPARK_API_KEY}`,
         'Content-Type': 'application/json',
