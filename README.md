@@ -32,7 +32,9 @@ Copy `.env.example` to `.env` and fill in the values:
 
 - `OPENAI_API_KEY`: Required for OpenAI Realtime API.
 - `OPENCLAW_HOOKS_TOKEN`: Required for OpenClaw gateway access.
-- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`: Required for outbound calls.
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`: Required for outbound calls. `TWILIO_AUTH_TOKEN` is also used to verify the `X-Twilio-Signature` on `/voice/webhook`; unsigned or forged webhook requests get a 403.
+- `TWILIO_SKIP_SIGNATURE_VERIFICATION`: Set to `true` only for local testing to bypass webhook signature checks.
+- `CALL_API_TOKEN`: Bearer token required by `POST /call` (falls back to `OPENCLAW_HOOKS_TOKEN`). If neither is set, `/call` is disabled.
 - `ALLOWED_CALLERS`: Comma-separated list of authorized phone numbers.
 - `PUBLIC_URL_HOST`: The public hostname of your server (e.g., `yourserver.com`).
 - `PORT`: Default 3334.
@@ -70,6 +72,7 @@ To initiate an outbound call:
 
 ```bash
 curl -X POST http://localhost:3334/call \
+  -H "Authorization: Bearer $CALL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"to": "+1234567890"}'
 ```
