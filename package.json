@@ -30,7 +30,7 @@
     "@types/express": "^5.0.0",
     "@types/ws": "^8.5.14",
     "@types/node": "^22.13.1",
-    "openclaw": "2026.6.6",
+    "openclaw": "2026.9.2",
     "tsx": "^4.20.5",
     "typescript": "^5.7.3",
     "ts-node": "^10.9.2"
