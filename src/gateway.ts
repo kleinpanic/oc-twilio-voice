@@ -18,7 +18,10 @@ const SPARK_LLM_URL =
   process.env.SPARK_LLM_URL ?? 'http://dgx-spark.local:18091/v1/chat/completions';
 
 // Bound each request so a hung endpoint cannot stall the call's turn loop.
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 15_000);
+// Blank, zero or non-numeric values fall back to the default: axios treats a
+// timeout of 0 (what Number('') gives) as "no timeout".
+const LLM_TIMEOUT_ENV = Number(process.env.LLM_TIMEOUT_MS);
+const LLM_TIMEOUT_MS = Number.isFinite(LLM_TIMEOUT_ENV) && LLM_TIMEOUT_ENV > 0 ? LLM_TIMEOUT_ENV : 15_000;
 
 // Default fallback model id — local Spark-served, overridable via env.
 const DEFAULT_FALLBACK_MODEL = process.env.VOICE_FALLBACK_MODEL ?? 'spark/llm';

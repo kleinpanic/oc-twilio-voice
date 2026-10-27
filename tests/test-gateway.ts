@@ -117,6 +117,23 @@ async function run(): Promise<void> {
         `model was ${capturedBody?.model}`,
       );
       check('override path still returns a reply', reply2.length > 0);
+
+      // A blank or invalid LLM_TIMEOUT_MS must not disable the timeout
+      for (const raw of ['', '0', 'abc']) {
+        process.env.LLM_TIMEOUT_MS = raw;
+        delete require.cache[require.resolve('../src/gateway')];
+        capturedTimeout = undefined;
+        await require('../src/gateway').sendToOpenClaw('hi', 'main');
+        check(
+          `LLM_TIMEOUT_MS=${JSON.stringify(raw)} keeps a positive timeout`,
+          typeof capturedTimeout === 'number' && capturedTimeout > 0 && Number.isFinite(capturedTimeout),
+          String(capturedTimeout),
+        );
+      }
+      process.env.LLM_TIMEOUT_MS = '2500';
+      delete require.cache[require.resolve('../src/gateway')];
+      await require('../src/gateway').sendToOpenClaw('hi', 'main');
+      check('LLM_TIMEOUT_MS overrides the timeout', capturedTimeout === 2500, String(capturedTimeout));
     } catch (e) {
       check('Test 2 ran without throwing', false, String(e));
     } finally {
