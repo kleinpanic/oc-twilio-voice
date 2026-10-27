@@ -37,7 +37,7 @@ async function testCallHandler(): Promise<void> {
   const { createCallHandler } = await import('../src/call-api.js');
   const calls: unknown[] = [];
   const initiate = async (opts: unknown) => { calls.push(opts); return { callSid: 'CA1', agentId: 'main' }; };
-  const body = { to: '+12673479614' };
+  const body = { to: '+15555550100' };
 
   {
     const { res, out } = mockRes();
@@ -57,23 +57,23 @@ async function testCallHandler(): Promise<void> {
   {
     const { res, out } = mockRes();
     await createCallHandler('secret', initiate)(
-      { headers: { authorization: 'Bearer secret' }, body: { to: ['+12673479614'] } } as never, res as never);
+      { headers: { authorization: 'Bearer secret' }, body: { to: ['+15555550100'] } } as never, res as never);
     check('/call rejects a non-string "to"', out.status === 400 && calls.length === 0, String(out.status));
   }
   {
     const { res, out } = mockRes();
     await createCallHandler('secret', initiate)(
-      { headers: { authorization: 'Bearer secret' }, body: { to: '+12673479614', openingMessage: { x: 1 } } } as never, res as never);
+      { headers: { authorization: 'Bearer secret' }, body: { to: '+15555550100', openingMessage: { x: 1 } } } as never, res as never);
     check('/call rejects a non-string optional field', out.status === 400 && calls.length === 0, String(out.status));
   }
   {
     const { res, out } = mockRes();
     await createCallHandler('secret', initiate)(
-      { headers: { authorization: 'Bearer secret' }, body: { to: '+12673479614', agentId: 'dev', extra: 'x' } } as never, res as never);
+      { headers: { authorization: 'Bearer secret' }, body: { to: '+15555550100', agentId: 'dev', extra: 'x' } } as never, res as never);
     check('/call accepts a valid request', out.status === 200 && calls.length === 1, JSON.stringify(out));
     check(
       '/call forwards only known fields',
-      JSON.stringify(calls[0]) === JSON.stringify({ to: '+12673479614', agentId: 'dev' }),
+      JSON.stringify(calls[0]) === JSON.stringify({ to: '+15555550100', agentId: 'dev' }),
       JSON.stringify(calls[0]),
     );
   }
