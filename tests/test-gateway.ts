@@ -71,10 +71,12 @@ async function run(): Promise<void> {
     let capturedUrl = '';
     let capturedBody: any = null;
     let capturedAuth = '';
+    let capturedTimeout: unknown;
     (axios as any).post = async (url: string, body: any, cfg: any) => {
       capturedUrl = url;
       capturedBody = body;
       capturedAuth = cfg?.headers?.Authorization ?? '';
+      capturedTimeout = cfg?.timeout;
       return { data: { choices: [{ message: { content: 'hello from spark' } }] } };
     };
 
@@ -96,6 +98,11 @@ async function run(): Promise<void> {
         'auth header did not use SPARK_API_KEY',
       );
       check(
+        'request sets a finite, positive timeout',
+        typeof capturedTimeout === 'number' && capturedTimeout > 0 && Number.isFinite(capturedTimeout),
+        String(capturedTimeout),
+      );
+      check(
         'main persona resolves to VOICE_FALLBACK_MODEL default',
         capturedBody?.model === 'spark/test-model',
         `model was ${capturedBody?.model}`,
@@ -110,6 +117,23 @@ async function run(): Promise<void> {
         `model was ${capturedBody?.model}`,
       );
       check('override path still returns a reply', reply2.length > 0);
+
+      // A blank or invalid LLM_TIMEOUT_MS must not disable the timeout
+      for (const raw of ['', '0', 'abc']) {
+        process.env.LLM_TIMEOUT_MS = raw;
+        delete require.cache[require.resolve('../src/gateway')];
+        capturedTimeout = undefined;
+        await require('../src/gateway').sendToOpenClaw('hi', 'main');
+        check(
+          `LLM_TIMEOUT_MS=${JSON.stringify(raw)} keeps a positive timeout`,
+          typeof capturedTimeout === 'number' && capturedTimeout > 0 && Number.isFinite(capturedTimeout),
+          String(capturedTimeout),
+        );
+      }
+      process.env.LLM_TIMEOUT_MS = '2500';
+      delete require.cache[require.resolve('../src/gateway')];
+      await require('../src/gateway').sendToOpenClaw('hi', 'main');
+      check('LLM_TIMEOUT_MS overrides the timeout', capturedTimeout === 2500, String(capturedTimeout));
     } catch (e) {
       check('Test 2 ran without throwing', false, String(e));
     } finally {

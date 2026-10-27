@@ -10,7 +10,9 @@
     "test:webhook": "npx tsx tests/test-webhook.ts",
     "test:pipeline": "npx tsx tests/test-pipeline.ts",
     "test:gateway": "npx tsx tests/test-gateway.ts",
-    "test": "npx tsx tests/test-webhook.ts && npx tsx tests/test-pipeline.ts && npx tsx tests/test-gateway.ts",
+    "test:security": "npx tsx tests/test-security.ts",
+    "test": "npx tsx tests/test-webhook.ts && npx tsx tests/test-gateway.ts && npx tsx tests/test-security.ts",
+    "typecheck": "tsc --noEmit",
     "plugin:build": "npm run build && openclaw plugins build --entry ./dist/plugin.js",
     "plugin:validate": "npm run build && openclaw plugins validate --entry ./dist/plugin.js"
   },

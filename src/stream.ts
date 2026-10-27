@@ -15,6 +15,7 @@ import { transcribe } from './stt.js';
 import { synthesize } from './tts.js';
 import { sendToOpenClaw } from './gateway.js';
 import { mulawToWav, audioToMulaw } from './mulaw.js';
+import { consumeStreamToken } from './security.js';
 
 // Fallback turn-taking config
 const SPEECH_SILENCE_MS   = 1500;  // ms of silence after speech → process turn
@@ -22,21 +23,25 @@ const MAX_TURN_MS         = 10000; // force-process after this long regardless
 const SPEECH_ENERGY_RATIO = 0.04;  // fraction of chunk bytes that must be "loud" (lower = more sensitive)
 const SPEECH_ENERGY_DELTA = 10;    // min byte deviation from µ-law silence (lower = catches quiet speech)
 const MIN_AUDIO_MS        = 300;   // skip clips shorter than this
+const STREAM_AUTH_TIMEOUT_MS = 10000; // close sockets that send no valid `start` by then
 
 /**
  * Lightweight µ-law speech detector.
- * G.711 µ-law silence ≈ 0x7F. We count bytes that deviate > SPEECH_ENERGY_DELTA
- * from silence. Returns true if > SPEECH_ENERGY_RATIO of bytes are "loud".
+ * G.711 µ-law silence is 0x7F (-0) or 0xFF (+0); the high bit is the sign and
+ * magnitude grows as the low 7 bits fall from 0x7F to 0x00. We count bytes
+ * whose magnitude exceeds SPEECH_ENERGY_DELTA steps above silence. Returns
+ * true if > SPEECH_ENERGY_RATIO of bytes are "loud".
  */
-function hasSpeech(chunk: Buffer): boolean {
+export function hasSpeech(chunk: Buffer): boolean {
+  if (chunk.length === 0) return false;
   let loud = 0;
   for (let i = 0; i < chunk.length; i++) {
-    if (Math.abs((chunk[i] as number) - 0x7f) > SPEECH_ENERGY_DELTA) loud++;
+    if (0x7f - ((chunk[i] as number) & 0x7f) > SPEECH_ENERGY_DELTA) loud++;
   }
   return loud / chunk.length > SPEECH_ENERGY_RATIO;
 }
 
-export function handleStream(wss: WebSocketServer): void {
+export function handleStream(wss: WebSocketServer, authTimeoutMs = STREAM_AUTH_TIMEOUT_MS): void {
   wss.on('connection', (ws: WebSocket) => {
     console.log('[stream] New Twilio Media Streams connection');
 
@@ -47,6 +52,15 @@ export function handleStream(wss: WebSocketServer): void {
     let openingMessage = '';
     let realtimeFailed = false;
     let callEnded = false;
+    let authorized = false;
+
+    // Twilio sends `start` right after connecting; drop sockets that never authorize
+    const authTimer = setTimeout(() => {
+      if (!authorized) {
+        console.warn('[stream] Closing stream that did not authorize in time');
+        ws.close(1008, 'Unauthorized');
+      }
+    }, authTimeoutMs);
 
     // Fallback accumulation state
     let mulawChunks: Buffer[] = [];
@@ -166,12 +180,22 @@ export function handleStream(wss: WebSocketServer): void {
         console.log('[stream] Twilio connected');
 
       } else if (msg.event === 'start') {
-        const start = msg.start as Record<string, unknown>;
+        if (authorized) return;
+        const start = (msg.start ?? {}) as Record<string, unknown>;
+        const customParams = (start.customParameters ?? {}) as Record<string, string>;
+
+        // Only accept streams opened from TwiML our webhook issued for this call
+        if (!consumeStreamToken(customParams.token, start.callSid)) {
+          console.warn('[stream] Rejecting stream with missing/invalid token');
+          ws.close(1008, 'Unauthorized');
+          return;
+        }
+        authorized = true;
+        clearTimeout(authTimer);
         callSid   = start.callSid as string;
-        streamSid = start.streamSid as string;
+        streamSid = typeof start.streamSid === 'string' ? start.streamSid : '';
 
         // Read per-call agent routing from customParameters
-        const customParams = (start.customParameters ?? {}) as Record<string, string>;
         agentId        = customParams.agentId        || 'main';
         modelOverride  = customParams.model          || '';
         openingMessage = customParams.openingMessage || '';
@@ -180,9 +204,10 @@ export function handleStream(wss: WebSocketServer): void {
         tryRealtime();
 
       } else if (msg.event === 'media') {
-        if (!realtimeFailed || processingFallback) return;
+        if (!authorized || !realtimeFailed || processingFallback) return;
 
-        const media = msg.media as Record<string, string>;
+        const media = msg.media as Record<string, unknown> | undefined;
+        if (typeof media?.payload !== 'string') return;
         const chunk = Buffer.from(media.payload, 'base64');
         mulawChunks.push(chunk);
 
@@ -209,6 +234,7 @@ export function handleStream(wss: WebSocketServer): void {
         // Silent chunks just accumulate without resetting timers
 
       } else if (msg.event === 'stop') {
+        if (!authorized) return;
         console.log(`[stream] Call ended: CallSid=${callSid}`);
         callEnded = true;
         clearTurnTimers();
@@ -220,6 +246,7 @@ export function handleStream(wss: WebSocketServer): void {
 
     ws.on('close', () => {
       console.log(`[stream] WebSocket closed: CallSid=${callSid}`);
+      clearTimeout(authTimer);
       clearTurnTimers();
     });
 

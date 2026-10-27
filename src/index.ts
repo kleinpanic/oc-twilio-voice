@@ -6,12 +6,13 @@ import http from 'http';
 import { WebSocketServer } from 'ws';
 import { handleWebhook } from './webhook.js';
 import { handleStream } from './stream.js';
-import { initiateOutboundCall, type CallOptions } from './outbound.js';
+import { initiateOutboundCall } from './outbound.js';
+import { createCallHandler } from './call-api.js';
 
 const PORT            = process.env.PORT            || 3334;
 const PUBLIC_URL_HOST = process.env.PUBLIC_URL_HOST || 'localhost';
 
-// Simple bearer token guard for the /call endpoint so any agent can call in
+// Bearer token required by POST /call; the endpoint is disabled when unset
 const CALL_API_TOKEN  = process.env.CALL_API_TOKEN  || process.env.OPENCLAW_HOOKS_TOKEN || '';
 
 const app    = express();
@@ -25,35 +26,7 @@ app.use(express.json());
 app.post('/voice/webhook', handleWebhook);
 
 // ── Initiate outbound call ───────────────────────────────────────────────────
-// POST /call
-// Body: { to, agentId?, model?, openingMessage? }
-// Header: Authorization: Bearer <CALL_API_TOKEN>
-app.post('/call', async (req, res) => {
-  // Light auth — only agents with the token can initiate calls
-  if (CALL_API_TOKEN) {
-    const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
-    if (auth !== CALL_API_TOKEN) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-  }
-
-  const opts = req.body as CallOptions;
-  if (!opts.to) {
-    res.status(400).json({ error: 'Missing required field: to' });
-    return;
-  }
-
-  try {
-    const result = await initiateOutboundCall(opts);
-    console.log(`[index] Outbound call initiated: ${JSON.stringify(result)}`);
-    res.json({ ok: true, ...result });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[index] Outbound call failed:', msg);
-    res.status(500).json({ error: msg });
-  }
-});
+app.post('/call', createCallHandler(CALL_API_TOKEN, initiateOutboundCall));
 
 // ── Status ───────────────────────────────────────────────────────────────────
 app.get('/status', (_req, res) => {
