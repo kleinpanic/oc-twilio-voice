@@ -5,6 +5,9 @@
  */
 
 delete process.env.OPENAI_API_KEY;
+// Keep the fallback greeting off the network when a test stream authorizes.
+process.env.SPARK_TTS_URL = 'http://127.0.0.1:1/v1/audio/speech';
+delete process.env.ELEVENLABS_API_KEY;
 
 import * as fs from 'fs';
 import * as http from 'http';
@@ -96,9 +99,10 @@ async function testStreamTokens(): Promise<void> {
 
 async function testStreamSocket(): Promise<void> {
   const { handleStream } = await import('../src/stream.js');
+  const { issueStreamToken } = await import('../src/security.js');
   const server = http.createServer();
   const wss = new WebSocketServer({ server, path: '/voice/stream' });
-  handleStream(wss);
+  handleStream(wss, 300);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as { port: number }).port;
 
@@ -137,6 +141,27 @@ async function testStreamSocket(): Promise<void> {
       }));
       const code = await closeCode(ws);
       check('stream with an unknown token is closed with 1008', code === 1008, String(code));
+    }
+
+    // A socket that never sends `start` is closed once the auth deadline passes
+    {
+      const ws = await connect();
+      ws.send(JSON.stringify({ event: 'connected' }));
+      const code = await closeCode(ws);
+      check('stream that never authorizes is closed with 1008', code === 1008, String(code));
+    }
+
+    // An authorized stream is not closed by the auth deadline
+    {
+      const token = issueStreamToken('CAauthorized');
+      const ws = await connect();
+      ws.send(JSON.stringify({
+        event: 'start',
+        start: { callSid: 'CAauthorized', streamSid: 'MZ2', customParameters: { token } },
+      }));
+      const code = await closeCode(ws, 600);
+      check('authorized stream stays open past the auth deadline', code === null, String(code));
+      ws.close();
     }
   } finally {
     process.off('uncaughtException', onUncaught);

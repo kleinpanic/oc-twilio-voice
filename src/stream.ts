@@ -23,6 +23,7 @@ const MAX_TURN_MS         = 10000; // force-process after this long regardless
 const SPEECH_ENERGY_RATIO = 0.04;  // fraction of chunk bytes that must be "loud" (lower = more sensitive)
 const SPEECH_ENERGY_DELTA = 10;    // min byte deviation from µ-law silence (lower = catches quiet speech)
 const MIN_AUDIO_MS        = 300;   // skip clips shorter than this
+const STREAM_AUTH_TIMEOUT_MS = 10000; // close sockets that send no valid `start` by then
 
 /**
  * Lightweight µ-law speech detector.
@@ -40,7 +41,7 @@ export function hasSpeech(chunk: Buffer): boolean {
   return loud / chunk.length > SPEECH_ENERGY_RATIO;
 }
 
-export function handleStream(wss: WebSocketServer): void {
+export function handleStream(wss: WebSocketServer, authTimeoutMs = STREAM_AUTH_TIMEOUT_MS): void {
   wss.on('connection', (ws: WebSocket) => {
     console.log('[stream] New Twilio Media Streams connection');
 
@@ -52,6 +53,14 @@ export function handleStream(wss: WebSocketServer): void {
     let realtimeFailed = false;
     let callEnded = false;
     let authorized = false;
+
+    // Twilio sends `start` right after connecting; drop sockets that never authorize
+    const authTimer = setTimeout(() => {
+      if (!authorized) {
+        console.warn('[stream] Closing stream that did not authorize in time');
+        ws.close(1008, 'Unauthorized');
+      }
+    }, authTimeoutMs);
 
     // Fallback accumulation state
     let mulawChunks: Buffer[] = [];
@@ -182,6 +191,7 @@ export function handleStream(wss: WebSocketServer): void {
           return;
         }
         authorized = true;
+        clearTimeout(authTimer);
         callSid   = start.callSid as string;
         streamSid = typeof start.streamSid === 'string' ? start.streamSid : '';
 
@@ -236,6 +246,7 @@ export function handleStream(wss: WebSocketServer): void {
 
     ws.on('close', () => {
       console.log(`[stream] WebSocket closed: CallSid=${callSid}`);
+      clearTimeout(authTimer);
       clearTurnTimers();
     });
 
