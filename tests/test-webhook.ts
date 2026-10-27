@@ -5,7 +5,7 @@
  * No actual call needed. Env is set here so the test is hermetic.
  */
 
-process.env.ALLOWED_CALLERS = '+12673479614';
+process.env.ALLOWED_CALLERS = '+15555550100';
 process.env.PUBLIC_URL_HOST = 'voice.example.com';
 process.env.TWILIO_AUTH_TOKEN = 'test-auth-token-not-a-real-secret';
 delete process.env.TWILIO_SKIP_SIGNATURE_VERIFICATION;
@@ -63,8 +63,8 @@ async function run() {
   // Test 1: Allowed caller
   {
     const { req, res, getSent } = mockReqRes({
-      From: '+12673479614',
-      To: '+12673184436',
+      From: '+15555550100',
+      To: '+15555550101',
       CallSid: 'CAtest001',
       CallStatus: 'ringing',
     });
@@ -81,7 +81,7 @@ async function run() {
   {
     const { req, res, getSent } = mockReqRes({
       From: '+19995550000',
-      To: '+12673184436',
+      To: '+15555550101',
       CallSid: 'CAtest002',
       CallStatus: 'ringing',
     });
@@ -93,7 +93,7 @@ async function run() {
   // Test 3: Outbound call answer with agent routing
   {
     const { req, res, getSent } = mockReqRes(
-      { From: '+12673184436', To: '+12673479614', CallSid: 'CAtest003', CallStatus: 'in-progress' },
+      { From: '+15555550101', To: '+15555550100', CallSid: 'CAtest003', CallStatus: 'in-progress' },
       { agentId: 'dev', openingMessage: 'Hey Klein, calling about the PR' },
     );
     handleWebhook(req as never, res as never);
@@ -108,7 +108,7 @@ async function run() {
   // Test 4: Missing Twilio signature is rejected
   {
     const { req, res, getSent } = mockReqRes(
-      { From: '+12673479614', To: '+12673184436', CallSid: 'CAtest004', CallStatus: 'ringing' },
+      { From: '+15555550100', To: '+15555550101', CallSid: 'CAtest004', CallStatus: 'ringing' },
       {},
       { signature: null },
     );
@@ -120,7 +120,7 @@ async function run() {
   // Test 5: Forged Twilio signature is rejected
   {
     const { req, res, getSent } = mockReqRes(
-      { From: '+12673479614', To: '+12673184436', CallSid: 'CAtest005', CallStatus: 'ringing' },
+      { From: '+15555550100', To: '+15555550101', CallSid: 'CAtest005', CallStatus: 'ringing' },
       {},
       { signature: 'Zm9yZ2VkLXNpZ25hdHVyZQ==' },
     );
@@ -133,7 +133,7 @@ async function run() {
   {
     const evil = '"/><Dial>+15555550123</Dial><Parameter name="x" value="';
     const { req, res, getSent } = mockReqRes(
-      { From: '+12673184436', To: '+12673479614', CallSid: 'CAtest006', CallStatus: 'in-progress' },
+      { From: '+15555550101', To: '+15555550100', CallSid: 'CAtest006', CallStatus: 'in-progress' },
       { agentId: evil, model: evil, openingMessage: 'Tom & Jerry <3' },
     );
     handleWebhook(req as never, res as never);
@@ -149,7 +149,7 @@ async function run() {
   // Test 7: Repeated query params (arrays) fall back to defaults
   {
     const { req, res, getSent } = mockReqRes(
-      { From: '+12673184436', To: '+12673479614', CallSid: 'CAtest007', CallStatus: 'in-progress' },
+      { From: '+15555550101', To: '+15555550100', CallSid: 'CAtest007', CallStatus: 'in-progress' },
       {},
     );
     (req as { query: Record<string, unknown> }).query = { agentId: ['a', 'b'] };
@@ -160,11 +160,11 @@ async function run() {
 
   // Test 8: Blank ALLOWED_CALLERS entries do not allow empty From/To
   {
-    process.env.ALLOWED_CALLERS = '+12673479614,';
+    process.env.ALLOWED_CALLERS = '+15555550100,';
     // Fresh load so the module-level allowlist picks up the new env.
     delete require.cache[require.resolve('../src/webhook')];
     const mod = require('../src/webhook') as { handleWebhook: (req: unknown, res: unknown) => void };
-    process.env.ALLOWED_CALLERS = '+12673479614';
+    process.env.ALLOWED_CALLERS = '+15555550100';
     const { req, res, getSent } = mockReqRes({ From: '', To: '', CallSid: 'CAtest008', CallStatus: 'ringing' });
     mod.handleWebhook(req as never, res as never);
     const { body } = getSent();
