@@ -32,7 +32,7 @@
     "@types/express": "^5.0.0",
     "@types/ws": "^8.5.14",
     "@types/node": "^22.13.1",
-    "openclaw": "2026.9.2",
+    "openclaw": "2026.10.5",
     "tsx": "^4.20.5",
     "typescript": "^5.7.3",
     "ts-node": "^10.9.2"
@@ -41,5 +41,14 @@
     "extensions": [
       "./dist/plugin.js"
     ]
+  },
+  "engines": {
+    "node": ">=24.16.0"
+  },
+  "overrides": {
+    "undici@^8": "8.12.3",
+    "undici@^6": "6.29.1",
+    "zod": "4.6.7",
+    "npm": "12.2.1"
   }
 }
